@@ -5,7 +5,7 @@
   var CONFIG = {
     META: {
       SCRIPT_NAME: 'Effect Usage Analyzer',
-      VERSION: 'v0.0.3',
+      VERSION: 'v0.0.4',
       DESCRIPTION:
         'Analyzes and displays all effects used in the active project with location details',
     },
@@ -31,6 +31,10 @@
         LOCATIONS: 'Used in:',
         NO_EFFECTS: 'No effects found in project',
         SELECT_EFFECT: 'Select an effect to see locations',
+      },
+      SEARCH: {
+        PLACEHOLDER: 'Search effects...',
+        CLEAR: 'Clear',
       },
       LISTBOX: {
         EFFECTS_HEIGHT: 180,
@@ -138,6 +142,23 @@
     effectsPnl.margins = CONFIG.UI.PANEL.MARGINS;
     effectsPnl.spacing = CONFIG.UI.PANEL.SPACING;
 
+    // Add search box
+    var searchGrp = effectsPnl.add('group');
+    searchGrp.orientation = 'row';
+    searchGrp.alignment = 'fill';
+    searchGrp.spacing = CONFIG.UI.PANEL.SPACING;
+
+    ui.searchBox = searchGrp.add('edittext', undefined, '');
+    ui.searchBox.helpTip = CONFIG.UI.SEARCH.PLACEHOLDER;
+    ui.searchBox.alignment = ['fill', 'center']; // This makes it expand to fill available space
+
+    ui.clearSearchBtn = searchGrp.add(
+      'button',
+      undefined,
+      CONFIG.UI.SEARCH.CLEAR
+    );
+    ui.clearSearchBtn.alignment = ['right', 'center']; // Keep button at natural size
+
     // Create table-style listbox for effects
     ui.effectsListBox = effectsPnl.add('listbox', undefined, undefined, {
       name: 'effectsTable',
@@ -210,6 +231,88 @@
     ui.locationsListBox.onChange = handleLocationSelection;
     ui.gotoBtn.onClick = handleGotoLayer;
     ui.refreshBtn.onClick = handleRefresh;
+
+    // Add search event handlers
+    ui.searchBox.onChanging = handleSearch; // Real-time search as user types
+    ui.clearSearchBtn.onClick = handleClearSearch;
+  }
+
+  /**
+   * Filters the effects list based on search term
+   * @param {string} searchTerm - The search term to filter by
+   */
+  function filterEffectsList(searchTerm) {
+    ui.effectsListBox.removeAll();
+
+    var effectsArray = [];
+    for (var matchName in effectsData) {
+      if (effectsData.hasOwnProperty(matchName)) {
+        var displayName =
+          effectsData[matchName].originalName ||
+          getDisplayNameFromMatchName(matchName);
+        var count = effectsData[matchName].instances.length;
+
+        // Filter based on search term (case insensitive)
+        if (
+          searchTerm === '' ||
+          displayName.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1 ||
+          matchName.toLowerCase().indexOf(searchTerm.toLowerCase()) !== -1
+        ) {
+          effectsArray.push({
+            displayName: displayName,
+            matchName: matchName,
+            count: count,
+          });
+        }
+      }
+    }
+
+    effectsArray.sort(function (a, b) {
+      return a.displayName.localeCompare(b.displayName);
+    });
+
+    for (var i = 0; i < effectsArray.length; i++) {
+      var effect = effectsArray[i];
+
+      var tableRow = ui.effectsListBox.add('item', effect.displayName);
+      tableRow.subItems[0].text = effect.matchName;
+      tableRow.subItems[1].text = effect.count.toString();
+
+      tableRow.effectData = {
+        displayName: effect.displayName,
+        matchName: effect.matchName,
+      };
+    }
+
+    if (effectsArray.length === 0) {
+      var noResultsText =
+        searchTerm === ''
+          ? CONFIG.UI.LABEL.NO_EFFECTS
+          : 'No effects match your search';
+      var noEffectsRow = ui.effectsListBox.add('item', noResultsText);
+      noEffectsRow.subItems[0].text = '';
+      noEffectsRow.subItems[1].text = '';
+    }
+
+    // Clear location list when search changes
+    clearLocationsList();
+    ui.gotoBtn.enabled = false;
+  }
+
+  /**
+   * Handles search box input
+   */
+  function handleSearch() {
+    var searchTerm = ui.searchBox.text;
+    filterEffectsList(searchTerm);
+  }
+
+  /**
+   * Clears the search box and shows all effects
+   */
+  function handleClearSearch() {
+    ui.searchBox.text = '';
+    filterEffectsList('');
   }
 
   /**
@@ -395,53 +498,9 @@
    * Populates the effects dropdown with found effects
    */
   function populateEffectsList() {
-    ui.effectsListBox.removeAll();
-
-    var effectsArray = [];
-    for (var matchName in effectsData) {
-      if (effectsData.hasOwnProperty(matchName)) {
-        var displayName =
-          effectsData[matchName].originalName ||
-          getDisplayNameFromMatchName(matchName);
-        var count = effectsData[matchName].instances.length;
-
-        effectsArray.push({
-          displayName: displayName,
-          matchName: matchName,
-          count: count,
-        });
-      }
-    }
-
-    effectsArray.sort(function (a, b) {
-      return a.displayName.localeCompare(b.displayName);
-    });
-
-    for (var i = 0; i < effectsArray.length; i++) {
-      var effect = effectsArray[i];
-
-      // Create table row - first column is the main item
-      var tableRow = ui.effectsListBox.add('item', effect.displayName);
-
-      // Populate remaining columns via subItems
-      tableRow.subItems[0].text = effect.matchName; // matchName column
-      tableRow.subItems[1].text = effect.count.toString(); // Count column
-
-      // Store effect data for selection handling
-      tableRow.effectData = {
-        displayName: effect.displayName,
-        matchName: effect.matchName,
-      };
-    }
-
-    if (effectsArray.length === 0) {
-      var noEffectsRow = ui.effectsListBox.add(
-        'item',
-        CONFIG.UI.LABEL.NO_EFFECTS
-      );
-      noEffectsRow.subItems[0].text = '';
-      noEffectsRow.subItems[1].text = '';
-    }
+    // Clear search box when repopulating (e.g., after refresh)
+    ui.searchBox.text = '';
+    filterEffectsList('');
   }
 
   /**
