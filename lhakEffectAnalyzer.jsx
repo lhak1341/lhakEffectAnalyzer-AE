@@ -5,14 +5,14 @@
   var CONFIG = {
     META: {
       SCRIPT_NAME: 'Effect Usage Analyzer',
-      VERSION: 'v0.0.1',
+      VERSION: 'v0.0.2',
       DESCRIPTION:
         'Analyzes and displays all effects used in the active project with location details',
     },
 
     UI: {
       WINDOW: {
-        WIDTH: 450,
+        WIDTH: 650,
         HEIGHT: 500,
         MARGINS: 15,
         SPACING: 8,
@@ -30,13 +30,16 @@
       LABEL: {
         EFFECTS: 'Effects in Project:',
         LOCATIONS: 'Used in:',
-        STATUS: 'Status: Ready',
         NO_EFFECTS: 'No effects found in project',
         SELECT_EFFECT: 'Select an effect to see locations',
       },
       LISTBOX: {
         HEIGHT: 150,
         LOCATIONS_HEIGHT: 200,
+      },
+      TABLE: {
+        COLUMN_WIDTHS: [150, 150, 120, 80], // Comp, Layer, Custom Name, Status
+        COLUMN_TITLES: ['Composition', 'Layer', 'Custom Name', 'Status'],
       },
     },
 
@@ -86,12 +89,14 @@
    * @returns {Object} UI object with all control references
    */
   function createUI(thisObj) {
-    var win =
-      thisObj instanceof Panel
-        ? thisObj
-        : new Window('dialog', CONFIG.META.SCRIPT_NAME);
+    var win;
 
-    if (!(thisObj instanceof Panel)) {
+    if (thisObj instanceof Panel) {
+      win = thisObj;
+    } else {
+      // Use 'palette' type for a modeless floating window
+      win = new Window('palette', CONFIG.META.SCRIPT_NAME);
+
       win.orientation = 'column';
       win.alignChildren = ['fill', 'top'];
       win.spacing = CONFIG.UI.WINDOW.SPACING;
@@ -110,34 +115,16 @@
    * Builds the complete user interface
    */
   function buildUI() {
-    buildHeaderPanel();
+    ui.window.orientation = 'column';
+    ui.window.alignChildren = ['fill', 'top'];
+    ui.window.spacing = CONFIG.UI.WINDOW.SPACING;
+
     buildEffectsPanel();
     buildLocationsPanel();
     buildControlPanel();
-  }
 
-  /**
-   * Builds the header panel with title and status
-   */
-  function buildHeaderPanel() {
-    var headerGrp = ui.window.add('group');
-    headerGrp.orientation = 'column';
-    headerGrp.alignChildren = ['fill', 'top'];
-    headerGrp.spacing = 4;
-
-    var titleLbl = headerGrp.add(
-      'statictext',
-      undefined,
-      CONFIG.META.SCRIPT_NAME + ' ' + CONFIG.META.VERSION
-    );
-    titleLbl.justify = 'center';
-
-    ui.statusLabel = headerGrp.add(
-      'statictext',
-      undefined,
-      CONFIG.UI.LABEL.STATUS
-    );
-    ui.statusLabel.justify = 'center';
+    ui.title = ui.window.add('statictext', undefined, CONFIG.META.VERSION);
+    ui.title.alignment = ['center', 'top'];
   }
 
   /**
@@ -180,7 +167,7 @@
   }
 
   /**
-   * Builds the locations display panel
+   * Builds the locations display panel with table format
    */
   function buildLocationsPanel() {
     var locationsPnl = ui.window.add(
@@ -193,7 +180,15 @@
     locationsPnl.margins = CONFIG.UI.PANEL.MARGINS;
     locationsPnl.spacing = CONFIG.UI.PANEL.SPACING;
 
-    ui.locationsListBox = locationsPnl.add('listbox');
+    // Create table-style listbox
+    ui.locationsListBox = locationsPnl.add('listbox', undefined, undefined, {
+      name: 'locationsTable',
+      multiselect: false,
+      numberOfColumns: 4,
+      columnWidths: CONFIG.UI.TABLE.COLUMN_WIDTHS,
+      columnTitles: CONFIG.UI.TABLE.COLUMN_TITLES,
+      showHeaders: true,
+    });
     ui.locationsListBox.preferredSize.height =
       CONFIG.UI.LISTBOX.LOCATIONS_HEIGHT;
 
@@ -318,7 +313,6 @@
     ui.gotoBtn.enabled = false;
 
     var modeText = showMatchNames ? 'technical names' : 'display names';
-    updateStatus('Switched to ' + modeText);
   }
 
   /**
@@ -339,7 +333,6 @@
     app.beginUndoGroup('Scan Project Effects');
 
     try {
-      updateStatus('Scanning project...');
       effectsData = {};
 
       if (!app.project) {
@@ -353,7 +346,6 @@
       clearLocationsList();
 
       var effectCount = Object.keys(effectsData).length;
-      updateStatus('Found ' + effectCount + ' unique effects');
 
       if (effectCount === 0) {
         ui.effectsListBox.removeAll();
@@ -361,7 +353,6 @@
       }
     } catch (error) {
       alert(CONFIG.ALERT.ERROR_GENERIC + error.toString());
-      updateStatus('Error during scan');
     } finally {
       app.endUndoGroup();
     }
@@ -499,7 +490,7 @@
   }
 
   /**
-   * Populates the locations list for selected effect
+   * Populates the locations table for selected effect
    * @param {string} effectName - Name of the selected effect
    */
   function populateLocationsList(effectName) {
@@ -514,19 +505,29 @@
 
     for (var i = 0; i < locations.length; i++) {
       var location = locations[i];
-      var statusText = location.enabled ? '' : ' (disabled)';
-      var customName =
+
+      // Determine custom name display
+      var customName = '';
+      if (
         location.displayName &&
         location.displayName !== effectsData[matchName].originalName
-          ? ' [' + location.displayName + ']'
-          : '';
-      var displayText =
-        location.compName +
-        ' > ' +
-        location.layerName +
-        customName +
-        statusText;
-      ui.locationsListBox.add('item', displayText);
+      ) {
+        customName = location.displayName;
+      }
+
+      // Determine status
+      var status = location.enabled ? 'Enabled' : 'Disabled';
+
+      // Create table row - first column is the main item
+      var tableRow = ui.locationsListBox.add('item', location.compName);
+
+      // Populate remaining columns via subItems
+      tableRow.subItems[0].text = location.layerName; // Layer column
+      tableRow.subItems[1].text = customName; // Custom Name column
+      tableRow.subItems[2].text = status; // Status column
+
+      // Store location data for navigation
+      tableRow.locationData = location;
     }
   }
 
@@ -548,13 +549,12 @@
    */
   function navigateToLayer(effectName, locationIndex) {
     try {
-      var matchName = getMatchNameFromDisplayName(effectName);
-      var locations = effectsData[matchName].instances;
-      if (!locations || locationIndex >= locations.length) {
+      var selectedLocation = ui.locationsListBox.selection;
+      if (!selectedLocation || !selectedLocation.locationData) {
         throw new Error(CONFIG.ALERT.LAYER_NOT_FOUND);
       }
 
-      var location = locations[locationIndex];
+      var location = selectedLocation.locationData;
       var comp = location.comp;
       var layer = location.layer;
 
@@ -567,13 +567,8 @@
       comp.openInViewer();
       var layerInComp = comp.layer(location.layerIndex);
       layerInComp.selected = true;
-
-      updateStatus(
-        'Navigated to: ' + location.compName + ' > ' + location.layerName
-      );
     } catch (error) {
       alert(CONFIG.ALERT.ERROR_GENERIC + error.toString());
-      updateStatus('Failed to navigate to layer');
     }
   }
 
@@ -592,16 +587,6 @@
     }
 
     return true;
-  }
-
-  /**
-   * Updates the status label
-   * @param {string} message - Status message to display
-   */
-  function updateStatus(message) {
-    if (ui && ui.statusLabel) {
-      ui.statusLabel.text = 'Status: ' + message;
-    }
   }
 
   /**
@@ -684,189 +669,362 @@
   function getBuiltInEffectName(matchName) {
     // Comprehensive mapping for built-in effects
     var displayNames = {
-      // Blur & Sharpen
-      'ADBE Fast Blur': 'Fast Blur',
-      'ADBE Gaussian Blur 2': 'Gaussian Blur',
-      'ADBE Motion Blur': 'Motion Blur',
-      'ADBE Radial Blur': 'Radial Blur',
-      'ADBE Directional Blur': 'Directional Blur',
-      'ADBE Camera Lens Blur': 'Camera Lens Blur',
-      'ADBE Sharpen': 'Sharpen',
-      'ADBE Unsharp Mask': 'Unsharp Mask',
-
-      // Color Correction
-      'ADBE Easy Levels2': 'Levels',
-      'ADBE Pro Levels2': 'Levels',
-      'ADBE Color Correction': 'Color Correction',
-      'ADBE Brightness & Contrast 2': 'Brightness & Contrast',
-      'ADBE Hue/Saturation': 'Hue/Saturation',
-      'ADBE HueSaturation': 'Hue/Saturation',
-      'ADBE HUE SATURATION': 'Hue/Saturation',
-      'ADBE Curves': 'Curves',
-      'ADBE Shadow/Highlight': 'Shadow/Highlight',
-      'ADBE Color Balance (HLS)': 'Color Balance (HLS)',
-      'ADBE Color Balance 2': 'Color Balance',
-      'ADBE Auto Levels': 'Auto Levels',
-      'ADBE Auto Color': 'Auto Color',
-      'ADBE Auto Contrast': 'Auto Contrast',
-      'ADBE Exposure2': 'Exposure',
-      'ADBE Gamma/Pedestal/Gain': 'Gamma/Pedestal/Gain',
-      'ADBE Lumetri': 'Lumetri Color',
-      'ADBE Channel Mixer': 'Channel Mixer',
-      'ADBE Photo Filter': 'Photo Filter',
-      'ADBE Tint': 'Tint',
-      'ADBE Tritone': 'Tritone',
-      'ADBE Change Color': 'Change Color',
-      'ADBE Change to Color': 'Change to Color',
-      'ADBE Leave Color': 'Leave Color',
-      'ADBE Black & White': 'Black & White',
-      'ADBE Colorama': 'Colorama',
-
-      // Noise & Grain
-      'ADBE Noise': 'Noise',
-      'ADBE Noise Alpha': 'Noise Alpha',
-      'ADBE Noise HLS': 'Noise HLS',
-      'ADBE Noise HLS Auto': 'Noise HLS Auto',
-      'ADBE Add Grain': 'Add Grain',
-      'ADBE Remove Grain': 'Remove Grain',
-      'ADBE Match Grain': 'Match Grain',
-
-      // Stylize
-      'ADBE Drop Shadow': 'Drop Shadow',
-      'ADBE Glow': 'Glow',
-      'ADBE Inner Glow': 'Inner Glow',
-      'ADBE Outer Glow': 'Outer Glow',
-      'ADBE Stroke': 'Stroke',
-      'ADBE Roughen Edges': 'Roughen Edges',
-      'ADBE Scatter': 'Scatter',
-      'ADBE Emboss': 'Emboss',
-      'ADBE Find Edges': 'Find Edges',
-      'ADBE Solarize': 'Solarize',
-      'ADBE Mosaic': 'Mosaic',
-      'ADBE Posterize': 'Posterize',
-      'ADBE Threshold2': 'Threshold',
-      'ADBE Alpha Levels': 'Alpha Levels',
-      'ADBE Brush Strokes': 'Brush Strokes',
-      'ADBE Color Emboss': 'Color Emboss',
-      'ADBE Glowing Edges': 'Glowing Edges',
-      'ADBE Texture': 'Texturize',
-
-      // Distort
-      'ADBE Transform': 'Transform',
-      'ADBE Warp': 'Warp',
-      'ADBE Turbulent Displace': 'Turbulent Displace',
-      'ADBE Twirl': 'Twirl',
-      'ADBE Ripple': 'Ripple',
-      'ADBE Wave Warp': 'Wave Warp',
-      'ADBE Spherize': 'Spherize',
-      'ADBE Bulge': 'Bulge',
-      'ADBE Polar Coordinates': 'Polar Coordinates',
-      'ADBE Optics Compensation': 'Optics Compensation',
-      'ADBE Liquify': 'Liquify',
-      'ADBE Mesh Warp': 'Mesh Warp',
-      'ADBE Mirror': 'Mirror',
-      'ADBE Offset': 'Offset',
-      'ADBE Reshape': 'Reshape',
-      'ADBE Smear': 'Smear',
-      'ADBE Corner Pin': 'Corner Pin',
-      'ADBE Bezier Warp': 'Bezier Warp',
-
-      // Generate
-      'ADBE Fill': 'Fill',
-      'ADBE Ramp': 'Ramp',
-      'ADBE 4 Color Gradient': '4-Color Gradient',
-      'ADBE Fractal Noise': 'Fractal Noise',
-      'ADBE Turbulent Noise': 'Turbulent Noise',
-      'ADBE Cell Pattern': 'Cell Pattern',
-      'ADBE Checkerboard': 'Checkerboard',
-      'ADBE Circle': 'Circle',
-      'ADBE Ellipse': 'Ellipse',
-      'ADBE Beam': 'Beam',
-      'ADBE Lightning': 'Advanced Lightning',
-      'ADBE Vegas': 'Vegas',
-      'ADBE Write-on': 'Write-on',
-      'ADBE Lens Flare': 'Lens Flare',
-      'ADBE Grid': 'Grid',
-      'ADBE Paint Bucket': 'Paint Bucket',
-      'ADBE Radio Waves': 'Radio Waves',
-      'ADBE Scribble': 'Scribble',
-      'ADBE Spiral': 'Spiral',
-
-      // Time
-      'ADBE Echo': 'Echo',
-      'ADBE Timewarp': 'Timewarp',
-      'ADBE Time Difference': 'Time Difference',
-      'ADBE Posterize Time': 'Posterize Time',
-      'ADBE CC Time Blend': 'CC Time Blend',
-      'ADBE CC Time Blend FX': 'CC Time Blend FX',
-      'ADBE Pixel Motion Blur': 'Pixel Motion Blur',
-      'ADBE RSMB': 'ReelSmart Motion Blur',
-
-      // Transition
-      'ADBE Block Dissolve': 'Block Dissolve',
-      'ADBE Card Wipe': 'Card Wipe',
-      'ADBE Gradient Wipe': 'Gradient Wipe',
-      'ADBE Iris Wipe': 'Iris Wipe',
-      'ADBE Linear Wipe': 'Linear Wipe',
-      'ADBE Radial Wipe': 'Radial Wipe',
-      'ADBE Venetian Blinds': 'Venetian Blinds',
-
-      // Matte
-      'ADBE Simple Choker': 'Simple Choker',
-      'ADBE Matte Choker': 'Matte Choker',
-      'ADBE Extract': 'Extract',
-      'ADBE Linear Color Key': 'Linear Color Key',
-      'ADBE Color Key': 'Color Key',
-      'ADBE Luma Key': 'Luma Key',
-      'ADBE Difference Matte': 'Difference Matte',
-      'ADBE Color Difference Key': 'Color Difference Key',
-      'ADBE Spill Suppressor': 'Spill Suppressor',
-      'ADBE Inner/Outer Key': 'Inner/Outer Key',
+      // 3D Channel
+      'ADBE AUX CHANNEL EXTRACT': '3D Channel Extract',
+      'ADBE DEPTH MATTE': 'Depth Matte',
+      'ADBE DEPTH FIELD': 'Depth of Field',
+      EXtractoR: 'EXtractoR',
+      'ADBE FOG_3D': 'Fog 3D',
+      'ADBE ID MATTE': 'ID Matte',
+      IDentifier: 'IDentifier',
 
       // Audio
-      'ADBE Backwards': 'Backwards',
-      'ADBE Bass&Treble': 'Bass & Treble',
-      'ADBE Delay': 'Delay',
-      'ADBE Flange&Chorus': 'Flange & Chorus',
-      'ADBE HighLowPass': 'High-Low Pass',
-      'ADBE Modulator': 'Modulator',
-      'ADBE Parametric EQ': 'Parametric EQ',
-      'ADBE Reverb': 'Reverb',
-      'ADBE Stereo Mixer': 'Stereo Mixer',
-      'ADBE Tone': 'Tone',
+      'ADBE Aud Reverse': 'Backwards',
+      'ADBE Aud BT': 'Bass & Treble',
+      'ADBE Aud Delay': 'Delay',
+      'ADBE Aud_Flange': 'Flange & Chorus',
+      'ADBE Aud HiLo': 'High-Low Pass',
+      'ADBE Aud Modulator': 'Modulator',
+      'ADBE Param EQ': 'Parametric EQ',
+      'ADBE Aud Reverb': 'Reverb',
+      'ADBE Aud Stereo Mixer': 'Stereo Mixer',
+      'ADBE Aud Tone': 'Tone',
+
+      // Blur & Sharpen
+      'ADBE Bilateral': 'Bilateral Blur',
+      'ADBE Camera Lens Blur': 'Camera Lens Blur',
+      'ADBE CameraShakeDeblur': 'Camera-Shake Deblur',
+      'CS CrossBlur': 'CC Cross Blur',
+      'CC Radial Blur': 'CC Radial Blur',
+      'CC Radial Fast Blur': 'CC Radial Fast Blur',
+      'CC Vector Blur': 'CC Vector Blur',
+      'ADBE Channel Blur': 'Channel Blur',
+      'ADBE Compound Blur': 'Compound Blur',
+      'ADBE Motion Blur': 'Directional Blur',
+      'ADBE Box Blur2': 'Fast Box Blur',
+      'ADBE Gaussian Blur 2': 'Gaussian Blur',
+      'ADBE Radial Blur': 'Radial Blur',
+      'ADBE Sharpen': 'Sharpen',
+      'ADBE Smart Blur': 'Smart Blur',
+      'ADBE Unsharp Mask2': 'Unsharp Mask',
 
       // Channel
       'ADBE Arithmetic': 'Arithmetic',
       'ADBE Blend': 'Blend',
       'ADBE Calculations': 'Calculations',
+      'CC Composite': 'CC Composite',
       'ADBE Channel Combiner': 'Channel Combiner',
       'ADBE Compound Arithmetic': 'Compound Arithmetic',
       'ADBE Invert': 'Invert',
-      'ADBE Maximum': 'Maximum',
-      'ADBE Minimum': 'Minimum',
+      'ADBE Minimax': 'Minimax',
       'ADBE Remove Color Matting': 'Remove Color Matting',
       'ADBE Set Channels': 'Set Channels',
+      'ADBE Set Matte3': 'Set Matte',
       'ADBE Shift Channels': 'Shift Channels',
-      'ADBE Set Matte': 'Set Matte',
+      'ADBE Solid Composite': 'Solid Composite',
 
-      // Utility
-      'ADBE Grow Bounds': 'Grow Bounds',
-      'ADBE Path Text': 'Path Text',
-      'ADBE Numbers': 'Numbers',
-      'ADBE Slider Control': 'Slider Control',
+      // CINEMA 4D
+      'CINEMA 4D Effect': 'CINEWARE',
+
+      // Color Correction
+      'ADBE AutoColor': 'Auto Color',
+      'ADBE AutoContrast': 'Auto Contrast',
+      'ADBE AutoLevels': 'Auto Levels',
+      'ADBE Black&White': 'Black & White',
+      'ADBE Brightness & Contrast 2': 'Brightness & Contrast',
+      'ADBE Broadcast Colors': 'Broadcast Colors',
+      'CS Color Neutralizer': 'CC Color Neutralizer',
+      'CC Color Offset': 'CC Color Offset',
+      'CS Kernel': 'CC Kernel',
+      'CC Toner': 'CC Toner',
+      'ADBE Change Color': 'Change Color',
+      'ADBE Change To Color': 'Change to Color',
+      'ADBE CHANNEL MIXER': 'Channel Mixer',
+      'ADBE Color Balance 2': 'Color Balance',
+      'ADBE Color Balance (HLS)': 'Color Balance (HLS)',
+      'ADBE Color Link': 'Color Link',
+      'ADBE Deflicker': 'Color Stabilizer',
+      'APC Colorama': 'Colorama',
+      'ADBE CurvesCustom': 'Curves',
+      'ADBE Equalize': 'Equalize',
+      'ADBE Exposure2': 'Exposure',
+      'ADBE Gamma/Pedestal/Gain2': 'Gamma/Pedestal/Gain',
+      'ADBE HUE SATURATION': 'Hue/Saturation',
+      'ADBE Leave Color': 'Leave Color',
+      'ADBE Easy Levels2': 'Levels',
+      'ADBE Pro Levels2': 'Levels (Individual Controls)',
+      'ADBE Lumetri': 'Lumetri Color',
+      'ADBE PhotoFilterPS': 'Photo Filter',
+      'ADBE PS Arbitrary Map': 'PS Arbitrary Map',
+      'ADBE SelectiveColor': 'Selective Color',
+      'ADBE ShadowHighlight': 'Shadow/Highlight',
+      'ADBE Tint': 'Tint',
+      'ADBE Tritone': 'Tritone',
+      'ADBE Vibrance': 'Vibrance',
+
+      // Distort
+      'ADBE BEZMESH': 'Bezier Warp',
+      'ADBE Bulge': 'Bulge',
+      'CC Bend It': 'CC Bend It',
+      'CC Bender': 'CC Bender',
+      'CC Blobbylize': 'CC Blobbylize',
+      'CC Flo Motion': 'CC Flo Motion',
+      'CC Griddler': 'CC Griddler',
+      'CC Lens': 'CC Lens',
+      'CC Page Turn': 'CC Page Turn',
+      'CC Power Pin': 'CC Power Pin',
+      'CC Ripple Pulse': 'CC Ripple Pulse',
+      'CC Slant': 'CC Slant',
+      'CC Smear': 'CC Smear',
+      'CC Split': 'CC Split',
+      'CC Split 2': 'CC Split 2',
+      'CC Tiler': 'CC Tiler',
+      'ADBE Corner Pin': 'Corner Pin',
+      'ADBE Upscale': 'Detail-preserving Upscale',
+      'ADBE Displacement Map': 'Displacement Map',
+      'ADBE LIQUIFY': 'Liquify',
+      'ADBE Magnify': 'Magnify',
+      'ADBE MESH WARP': 'Mesh Warp',
+      'ADBE Mirror': 'Mirror',
+      'ADBE Offset': 'Offset',
+      'ADBE Optics Compensation': 'Optics Compensation',
+      'ADBE Polar Coordinates': 'Polar Coordinates',
+      'ADBE RESHAPE': 'Reshape',
+      'ADBE Ripple': 'Ripple',
+      'ADBE Rolling Shutter': 'Rolling Shutter Repair',
+      'ADBE SCHMEAR': 'Smear',
+      'ADBE Spherize': 'Spherize',
+      'ADBE Geometry2': 'Transform',
+      'ADBE Turbulent Displace': 'Turbulent Displace',
+      'ADBE Twirl': 'Twirl',
+      'ADBE WRPMESH': 'Warp',
+      'ADBE SubspaceStabilizer': 'Warp Stabilizer VFX',
+      'ADBE Wave Warp': 'Wave Warp',
+
+      // Expression Controls
+      'ADBE Point3D Control': '3D Point Control',
       'ADBE Angle Control': 'Angle Control',
       'ADBE Checkbox Control': 'Checkbox Control',
       'ADBE Color Control': 'Color Control',
-      'ADBE Point Control': 'Point Control',
+      'ADBE Dropdown Control': 'Dropdown Control',
       'ADBE Layer Control': 'Layer Control',
-      'ADBE Expression Control': 'Expression Control',
-      'ADBE 3D Point Control': '3D Point Control',
+      'ADBE Point Control': 'Point Control',
+      'ADBE Slider Control': 'Slider Control',
+
+      // Generate
+      'ADBE 4ColorGradient': '4-Color Gradient',
+      'ADBE Lightning 2': 'Advanced Lightning',
+      'ADBE AudSpect': 'Audio Spectrum',
+      'ADBE AudWave': 'Audio Waveform',
+      'ADBE Laser': 'Beam',
+      'CC Glue Gun': 'CC Glue Gun',
+      'CC Light Burst 2.5': 'CC Light Burst 2.5',
+      'CC Light Rays': 'CC Light Rays',
+      'CC Light Sweep': 'CC Light Sweep',
+      'CS Threads': 'CC Threads',
+      'ADBE Cell Pattern': 'Cell Pattern',
+      'ADBE Checkerboard': 'Checkerboard',
+      'ADBE Circle': 'Circle',
+      'ADBE ELLIPSE': 'Ellipse',
+      'ADBE Eyedropper Fill': 'Eyedropper Fill',
+      'ADBE Fill': 'Fill',
+      'ADBE Fractal': 'Fractal',
+      'ADBE Ramp': 'Gradient Ramp',
+      'ADBE Grid': 'Grid',
+      'ADBE Lens Flare': 'Lens Flare',
+      'ADBE Paint Bucket': 'Paint Bucket',
+      'APC Radio Waves': 'Radio Waves',
+      'ADBE Scribble Fill': 'Scribble',
+      'ADBE Stroke': 'Stroke',
+      'APC Vegas': 'Vegas',
+      'ADBE Write-on': 'Write-on',
+
+      // Keying
+      'ADBE Spill2': 'Advanced Spill Suppressor',
+      'CC Simple Wire Removal': 'CC Simple Wire Removal',
+      'ADBE Color Difference Key': 'Color Difference Key',
+      'ADBE Color Range': 'Color Range',
+      'ADBE Difference Matte2': 'Difference Matte',
+      'ADBE Extract': 'Extract',
+      'ADBE ATG Extract': 'Inner/Outer Key',
+      'ADBE KeyCleaner': 'Key Cleaner',
+      'Keylight 906': 'Keylight (1.2)',
+      'ADBE Linear Color Key2': 'Linear Color Key',
+
+      // Matte
+      'ADBE Matte Choker': 'Matte Choker',
+      'ISL MochaShapeImporter': 'mocha shape',
+      'ADBE RefineRBMatte': 'Refine Hard Matte',
+      'ADBE RefineMatte2': 'Refine Soft Matte',
+      'ADBE Simple Choker': 'Simple Choker',
+
+      // Noise & Grain
+      'VISINF Grain Implant': 'Add Grain',
+      'ADBE Dust & Scratches': 'Dust & Scratches',
+      'ADBE Fractal Noise': 'Fractal Noise',
+      'VISINF Grain Duplication': 'Match Grain',
+      'ADBE Median': 'Median',
+      'ADBE Noise': 'Noise',
+      'ADBE Noise Alpha2': 'Noise Alpha',
+      'ADBE Noise HLS2': 'Noise HLS',
+      'ADBE Noise HLS Auto2': 'Noise HLS Auto',
+      'VISINF Grain Removal': 'Remove Grain',
+      'ADBE AIF Perlin Noise 3D': 'Turbulent Noise',
 
       // Perspective
-      'ADBE 3D Camera Tracker': '3D Camera Tracker',
-      'ADBE Basic 3D': 'Basic 3D',
+      'ADBE 3D Tracker': '3D Camera Tracker',
+      'ADBE 3D Glasses2': '3D Glasses',
       'ADBE Bevel Alpha': 'Bevel Alpha',
       'ADBE Bevel Edges': 'Bevel Edges',
+      'CC Cylinder': 'CC Cylinder',
+      'CC Environment': 'CC Environment',
+      'CC Sphere': 'CC Sphere',
+      'CC Spotlight': 'CC Spotlight',
+      'ADBE Drop Shadow': 'Drop Shadow',
+      'ADBE Radial Shadow': 'Radial Shadow',
+
+      // Simulation
+      'APC CardDanceCam': 'Card Dance',
+      'APC Caustics': 'Caustics',
+      'CC Ball Action': 'CC Ball Action',
+      'CC Bubbles': 'CC Bubbles',
+      'CC Drizzle': 'CC Drizzle',
+      'CC Hair': 'CC Hair',
+      'CC Mr. Mercury': 'CC Mr. Mercury',
+      'CC Particle Systems II': 'CC Particle Systems II',
+      'CC Particle World': 'CC Particle World',
+      'CC Pixel Polly': 'CC Pixel Polly',
+      CSRainfall: 'CC Rainfall',
+      'CC Scatterize': 'CC Scatterize',
+      CSSnowfall: 'CC Snowfall',
+      'CC Star Burst': 'CC Star Burst',
+      'APC Foam': 'Foam',
+      'ADBE Playgnd': 'Particle Playground',
+      'APC Shatter': 'Shatter',
+      'APC Wave World': 'Wave World',
+
+      // Stylize
+      'ADBE Brush Strokes': 'Brush Strokes',
+      'ADBE Cartoonify': 'Cartoon',
+      'CS BlockLoad': 'CC Block Load',
+      'CC Burn Film': 'CC Burn Film',
+      'CC Glass': 'CC Glass',
+      'CS HexTile': 'CC HexTile',
+      'CC Kaleida': 'CC Kaleida',
+      'CC Mr. Smoothie': 'CC Mr. Smoothie',
+      'CC Plastic': 'CC Plastic',
+      'CC RepeTile': 'CC RepeTile',
+      'CC Threshold': 'CC Threshold',
+      'CC Threshold RGB': 'CC Threshold RGB',
+      'CS Vignette': 'CC Vignette',
+      'ADBE Color Emboss': 'Color Emboss',
+      'ADBE Emboss': 'Emboss',
+      'ADBE Find Edges': 'Find Edges',
+      'ADBE Glo2': 'Glow',
+      'ADBE Mosaic': 'Mosaic',
+      'ADBE Tile': 'Motion Tile',
+      'ADBE Posterize': 'Posterize',
+      'ADBE Roughen Edges': 'Roughen Edges',
+      'ADBE Scatter': 'Scatter',
+      'ADBE Strobe': 'Strobe Light',
+      'ADBE Texturize': 'Texturize',
+      'ADBE Threshold2': 'Threshold',
+
+      // Synthetic Aperture
+      'SYNTHAP CF Color Finesse 2': 'SA Color Finesse 3',
+
+      // Text
+      'ADBE Numbers2': 'Numbers',
+      'ADBE Timecode': 'Timecode',
+
+      // Time
+      'CC Force Motion Blur': 'CC Force Motion Blur',
+      'CC Wide Time': 'CC Wide Time',
+      'ADBE Echo': 'Echo',
+      'ADBE OFMotionBlur': 'Pixel Motion Blur',
+      'ADBE Posterize Time': 'Posterize Time',
+      'ADBE Difference': 'Time Difference',
+      'ADBE Time Displacement': 'Time Displacement',
+      'ADBE Timewarp': 'Timewarp',
+
+      // Transition
+      'ADBE Block Dissolve': 'Block Dissolve',
+      'APC CardWipeCam': 'Card Wipe',
+      'CC Glass Wipe': 'CC Glass Wipe',
+      'CC Grid Wipe': 'CC Grid Wipe',
+      'CC Image Wipe': 'CC Image Wipe',
+      'CC Jaws': 'CC Jaws',
+      'CC Light Wipe': 'CC Light Wipe',
+      'CS LineSweep': 'CC Line Sweep',
+      'CC Radial ScaleWipe': 'CC Radial ScaleWipe',
+      'CC Scale Wipe': 'CC Scale Wipe',
+      'CC Twister': 'CC Twister',
+      'CC WarpoMatic': 'CC WarpoMatic',
+      'ADBE Gradient Wipe': 'Gradient Wipe',
+      'ADBE IRIS_WIPE': 'Iris Wipe',
+      'ADBE Linear Wipe': 'Linear Wipe',
+      'ADBE Radial Wipe': 'Radial Wipe',
+      'ADBE Venetian Blinds': 'Venetian Blinds',
+
+      // Utility
+      'ADBE Apply Color LUT2': 'Apply Color LUT',
+      'CC Overbrights': 'CC Overbrights',
+      'ADBE Cineon Converter2': 'Cineon Converter',
+      'ADBE ProfileToProfile': 'Color Profile Converter',
+      'ADBE GROW BOUNDS': 'Grow Bounds',
+      'ADBE Compander': 'HDR Compander',
+      'ADBE HDR ToneMap': 'HDR Highlight Compression',
+
+      // Obsolete Effects
+      'ADBE Basic 3D': 'Basic 3D',
+      'ADBE Basic Text2': 'Basic Text',
+      'ADBE Color Key': 'Color Key',
+      'ADBE Fast Blur': 'Fast Blur (Legacy)',
+      'ADBE Gaussian Blur': 'Gaussian Blur (Legacy)',
+      'ADBE Lightning': 'Lightning',
+      'ADBE Luma Key': 'Luma Key',
+      'ADBE Path Text': 'Path Text',
+      'ADBE Reduce Interlace Flicker': 'Reduce Interlace Flicker',
+      'ADBE Spill Suppressor': 'Spill Suppressor',
+
+      // _Obsolete (Internal Effects)
+      'ADBE Paint': 'Paint',
+      'ADBE Samurai': 'Roto Brush & Refine Edge',
+      'ADBE FreePin3': 'Puppet',
+      'ADBE RefineMatte': 'Refine Matte',
+      'ADBE 3D Glasses': '3D Glasses (Obsolete)',
+      'ADBE Alpha Levels2': 'Alpha Levels',
+      'ADBE Alpha Levels3': 'Alpha Levels',
+      'ADBE Apply Color LUT': 'Apply Color LUT',
+      'ADBE Brightness & Contrast': 'Brightness & Contrast',
+      'ADBE Box Blur': 'Box Blur',
+      'ADBE Cineon Converter': 'Cineon Converter',
+      'ADBE Color Balance': 'Color Balance',
+      'CC PS Classic': 'CC PS Classic (obsolete)',
+      'CC PS LE Classic': 'CC PS LE Classic (obsolete)',
+      'CC Rain': 'CC Rain',
+      'CC Snow': 'CC Snow',
+      'CC Time Blend': 'CC Time Blend',
+      'CC Time Blend FX': 'CC Time Blend FX',
+      'ADBE Exposure': 'Exposure',
+      'ADBE Easy Levels': 'Levels',
+      'ADBE Pro Levels': 'Levels (Individual Controls)',
+      'ADBE Noise Alpha': 'Noise Alpha',
+      'ADBE Noise HLS': 'Noise HLS',
+      'ADBE Noise HLS Auto': 'Noise HLS Auto',
+      'ADBE PSL Bevel Emboss': 'Photoshop Bevel And Emboss',
+      'ADBE PSL Drop Shadow': 'Photoshop Drop Shadow',
+      'ADBE PSL Inner Glow': 'Photoshop Inner Glow',
+      'ADBE PSL Inner Shadow': 'Photoshop Inner Shadow',
+      'ADBE PSL Outer Glow': 'Photoshop Outer Glow',
+      'ADBE PSL Solid Fill': 'Photoshop Solid Fill',
+      'ADBE Photo Filter': 'Photo Filter',
+      'ADBE Set Matte2': 'Set Matte',
+      'ADBE Three-Way Color Corrector': 'Three-Way Color Corrector',
+      'ADBE Threshold': 'Threshold',
+      'ADBE Geometry': 'Transform',
+      'ADBE Unsharp Mask': 'Unsharp Mask',
+      'ADBE Vector Paint': 'Vector Paint',
     };
 
     return displayNames[matchName] || cleanupBuiltInEffectName(matchName);
