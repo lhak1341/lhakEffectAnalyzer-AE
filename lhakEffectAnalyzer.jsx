@@ -5,7 +5,7 @@
   var CONFIG = {
     META: {
       SCRIPT_NAME: 'Effect Usage Analyzer',
-      VERSION: 'v0.0.2',
+      VERSION: 'v0.0.3',
       DESCRIPTION:
         'Analyzes and displays all effects used in the active project with location details',
     },
@@ -25,7 +25,6 @@
         SCAN: 'Scan Project',
         GOTO: 'Go to Layer',
         REFRESH: 'Refresh',
-        CLOSE: 'Close',
       },
       LABEL: {
         EFFECTS: 'Effects in Project:',
@@ -34,10 +33,14 @@
         SELECT_EFFECT: 'Select an effect to see locations',
       },
       LISTBOX: {
-        HEIGHT: 150,
+        EFFECTS_HEIGHT: 180,
         LOCATIONS_HEIGHT: 200,
       },
-      TABLE: {
+      EFFECTS_TABLE: {
+        COLUMN_WIDTHS: [200, 180, 60], // Effect, matchName, Count
+        COLUMN_TITLES: ['Effect', 'matchName', 'Count'],
+      },
+      LOCATIONS_TABLE: {
         COLUMN_WIDTHS: [150, 150, 120, 80], // Comp, Layer, Custom Name, Status
         COLUMN_TITLES: ['Composition', 'Layer', 'Custom Name', 'Status'],
       },
@@ -60,7 +63,6 @@
   var ui = null;
   var effectsData = {};
   var currentProject = null;
-  var showMatchNames = false; // Toggle for display vs technical names
 
   /************************************************************
    * INITIALIZATION
@@ -121,7 +123,6 @@
 
     buildEffectsPanel();
     buildLocationsPanel();
-    buildControlPanel();
 
     ui.title = ui.window.add('statictext', undefined, CONFIG.META.VERSION);
     ui.title.alignment = ['center', 'top'];
@@ -137,33 +138,16 @@
     effectsPnl.margins = CONFIG.UI.PANEL.MARGINS;
     effectsPnl.spacing = CONFIG.UI.PANEL.SPACING;
 
-    // Add radio buttons for display mode
-    var toggleGrp = effectsPnl.add('group');
-    toggleGrp.alignment = 'center';
-    toggleGrp.orientation = 'row';
-    toggleGrp.spacing = 15;
-
-    // Radio buttons must be direct children of the same group to work together
-    ui.displayModeRadio = toggleGrp.add('radiobutton', undefined, 'Display');
-    ui.technicalModeRadio = toggleGrp.add(
-      'radiobutton',
-      undefined,
-      'Technical'
-    );
-
-    // Force text to show by setting the text property explicitly
-    ui.displayModeRadio.text = 'Display';
-    ui.technicalModeRadio.text = 'Technical';
-
-    // Set default to Display mode
-    ui.displayModeRadio.value = true;
-    ui.technicalModeRadio.value = false;
-    showMatchNames = false;
-
-    ui.effectsListBox = effectsPnl.add('listbox');
-    ui.effectsListBox.preferredSize.height = CONFIG.UI.LISTBOX.HEIGHT;
-    ui.effectsListBox.add('item', CONFIG.UI.LABEL.SELECT_EFFECT);
-    ui.effectsListBox.selection = 0;
+    // Create table-style listbox for effects
+    ui.effectsListBox = effectsPnl.add('listbox', undefined, undefined, {
+      name: 'effectsTable',
+      multiselect: false,
+      numberOfColumns: 3,
+      columnWidths: CONFIG.UI.EFFECTS_TABLE.COLUMN_WIDTHS,
+      columnTitles: CONFIG.UI.EFFECTS_TABLE.COLUMN_TITLES,
+      showHeaders: true,
+    });
+    ui.effectsListBox.preferredSize.height = CONFIG.UI.LISTBOX.EFFECTS_HEIGHT;
   }
 
   /**
@@ -185,8 +169,8 @@
       name: 'locationsTable',
       multiselect: false,
       numberOfColumns: 4,
-      columnWidths: CONFIG.UI.TABLE.COLUMN_WIDTHS,
-      columnTitles: CONFIG.UI.TABLE.COLUMN_TITLES,
+      columnWidths: CONFIG.UI.LOCATIONS_TABLE.COLUMN_WIDTHS,
+      columnTitles: CONFIG.UI.LOCATIONS_TABLE.COLUMN_TITLES,
       showHeaders: true,
     });
     ui.locationsListBox.preferredSize.height =
@@ -198,27 +182,8 @@
 
     ui.gotoBtn = btnGrp.add('button', undefined, CONFIG.UI.BUTTON.GOTO);
     ui.gotoBtn.enabled = false;
-  }
 
-  /**
-   * Builds the control panel with action buttons
-   */
-  function buildControlPanel() {
-    var controlGrp = ui.window.add('group');
-    controlGrp.alignment = 'fill';
-    controlGrp.spacing = CONFIG.UI.PANEL.SPACING;
-
-    ui.refreshBtn = controlGrp.add(
-      'button',
-      undefined,
-      CONFIG.UI.BUTTON.REFRESH
-    );
-    controlGrp.add('panel'); // Spacer
-
-    if (!(thisObj instanceof Panel)) {
-      ui.closeBtn = controlGrp.add('button', undefined, CONFIG.UI.BUTTON.CLOSE);
-      ui.closeBtn.alignment = 'right';
-    }
+    ui.refreshBtn = btnGrp.add('button', undefined, CONFIG.UI.BUTTON.REFRESH);
   }
 
   /**
@@ -243,16 +208,8 @@
   function bindEvents() {
     ui.effectsListBox.onChange = handleEffectSelection;
     ui.locationsListBox.onChange = handleLocationSelection;
-    ui.displayModeRadio.onClick = handleDisplayModeChange;
-    ui.technicalModeRadio.onClick = handleDisplayModeChange;
     ui.gotoBtn.onClick = handleGotoLayer;
     ui.refreshBtn.onClick = handleRefresh;
-
-    if (ui.closeBtn) {
-      ui.closeBtn.onClick = function () {
-        ui.window.close();
-      };
-    }
   }
 
   /**
@@ -260,16 +217,13 @@
    */
   function handleEffectSelection() {
     var selectedEffect = ui.effectsListBox.selection;
-    if (!selectedEffect || selectedEffect.index === 0) {
+    if (!selectedEffect || !selectedEffect.effectData) {
       clearLocationsList();
       ui.gotoBtn.enabled = false;
       return;
     }
 
-    var effectName = selectedEffect.text.replace(/ \(\d+\)$/, ''); // Remove count suffix
-    var matchName = showMatchNames
-      ? effectName
-      : getMatchNameFromDisplayName(effectName);
+    var matchName = selectedEffect.effectData.matchName;
     populateLocationsList(matchName);
     ui.gotoBtn.enabled = false;
   }
@@ -294,25 +248,10 @@
       return;
     }
 
-    var effectName = selectedEffect.text.replace(/ \(\d+\)$/, '');
-    var matchName = showMatchNames
-      ? effectName
-      : getMatchNameFromDisplayName(effectName);
+    var matchName = selectedEffect.effectData.matchName;
     var locationIndex = selectedLocation.index;
 
     navigateToLayer(matchName, locationIndex);
-  }
-
-  /**
-   * Handles display mode change between friendly names and technical matchNames
-   */
-  function handleDisplayModeChange() {
-    showMatchNames = ui.technicalModeRadio.value;
-    populateEffectsList();
-    clearLocationsList();
-    ui.gotoBtn.enabled = false;
-
-    var modeText = showMatchNames ? 'technical names' : 'display names';
   }
 
   /**
@@ -457,36 +396,52 @@
    */
   function populateEffectsList() {
     ui.effectsListBox.removeAll();
-    ui.effectsListBox.add('item', CONFIG.UI.LABEL.SELECT_EFFECT);
 
-    var effectNames = [];
+    var effectsArray = [];
     for (var matchName in effectsData) {
       if (effectsData.hasOwnProperty(matchName)) {
-        var displayName;
-        if (showMatchNames) {
-          displayName = matchName; // Show technical matchName
-        } else {
-          displayName =
-            effectsData[matchName].originalName ||
-            getDisplayNameFromMatchName(matchName);
-        }
-        effectNames.push(displayName);
+        var displayName =
+          effectsData[matchName].originalName ||
+          getDisplayNameFromMatchName(matchName);
+        var count = effectsData[matchName].instances.length;
+
+        effectsArray.push({
+          displayName: displayName,
+          matchName: matchName,
+          count: count,
+        });
       }
     }
 
-    effectNames.sort();
+    effectsArray.sort(function (a, b) {
+      return a.displayName.localeCompare(b.displayName);
+    });
 
-    for (var i = 0; i < effectNames.length; i++) {
-      var effectName = effectNames[i];
-      var matchName = showMatchNames
-        ? effectName
-        : getMatchNameFromDisplayName(effectName);
-      var count = effectsData[matchName].instances.length;
-      var displayName = effectName + ' (' + count + ')';
-      ui.effectsListBox.add('item', displayName);
+    for (var i = 0; i < effectsArray.length; i++) {
+      var effect = effectsArray[i];
+
+      // Create table row - first column is the main item
+      var tableRow = ui.effectsListBox.add('item', effect.displayName);
+
+      // Populate remaining columns via subItems
+      tableRow.subItems[0].text = effect.matchName; // matchName column
+      tableRow.subItems[1].text = effect.count.toString(); // Count column
+
+      // Store effect data for selection handling
+      tableRow.effectData = {
+        displayName: effect.displayName,
+        matchName: effect.matchName,
+      };
     }
 
-    ui.effectsListBox.selection = 0;
+    if (effectsArray.length === 0) {
+      var noEffectsRow = ui.effectsListBox.add(
+        'item',
+        CONFIG.UI.LABEL.NO_EFFECTS
+      );
+      noEffectsRow.subItems[0].text = '';
+      noEffectsRow.subItems[1].text = '';
+    }
   }
 
   /**
@@ -496,7 +451,8 @@
   function populateLocationsList(effectName) {
     ui.locationsListBox.removeAll();
 
-    var matchName = getMatchNameFromDisplayName(effectName);
+    // effectName parameter is already the matchName, so use it directly
+    var matchName = effectName;
     if (!effectsData[matchName]) {
       return;
     }
