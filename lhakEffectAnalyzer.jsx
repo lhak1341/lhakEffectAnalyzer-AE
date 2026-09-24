@@ -5,7 +5,7 @@
   var CONFIG = {
     META: {
       SCRIPT_NAME: 'Effect Usage Analyzer',
-      VERSION: 'v0.0.4',
+      VERSION: 'v0.0.5',
       DESCRIPTION:
         'Analyzes and displays all effects used in the active project with location details',
     },
@@ -387,7 +387,12 @@
       populateEffectsList();
       clearLocationsList();
 
-      var effectCount = Object.keys(effectsData).length;
+      var effectCount = 0;
+      for (var key in effectsData) {
+        if (effectsData.hasOwnProperty(key)) {
+          effectCount++;
+        }
+      }
 
       if (effectCount === 0) {
         ui.effectsListBox.removeAll();
@@ -1106,8 +1111,8 @@
     // Convert underscores and technical formatting to spaces
     cleaned = cleaned.replace(/[_\-]/g, ' ');
 
-    // Clean up multiple spaces
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    // Clean up multiple spaces and trim whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
 
     // Capitalize first letter
     if (cleaned.length > 0) {
@@ -1134,8 +1139,8 @@
     // Only add spaces before capitals if they're not already spaced and not after special chars
     cleaned = cleaned.replace(/([a-z])([A-Z])/g, '$1 $2');
 
-    // Clean up any double spaces and trim
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
+    // Clean up any double spaces and trim whitespace
+    cleaned = cleaned.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
 
     // Capitalize first letter
     if (cleaned.length > 0) {
